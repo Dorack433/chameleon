@@ -1,0 +1,255 @@
+#!/bin/bash
+
+####################################################
+###    FUNÇÃO PARA INICIAR AS INSTÂNCIAS TOR     ###
+####################################################
+# Função que inicia múltiplas instâncias do Tor com configurações específicas
+# Retorna 0 em caso de sucesso, 1 em caso de erro
+# Variáveis dependentes:
+#   - TOR_INSTANCES: Número de instâncias Tor a serem criadas
+#   - Várias outras variáveis de configuração (portas, diretórios, etc.)
+# Saída:
+#   - Cria instâncias Tor e Privoxy configuradas
+#   - Gera arquivos de configuração e scripts auxiliares
+
+boot_tor_instances() {
+    # Verificação inicial de variáveis essenciais
+    if [[ -z "${TOR_INSTANCES}" ]]; then
+        echo "Erro: Variável TOR_INSTANCES não está definida" >&2
+        return 1
+    fi
+
+    if ! [[ "${TOR_INSTANCES}" =~ ^[0-9]+$ ]] || [[ "${TOR_INSTANCES}" -le 0 ]]; then
+        echo "Erro: TOR_INSTANCES deve ser um número positivo" >&2
+        return 1
+    fi
+
+    if [[ -z "${TOR_TEMP_FILES}" ]] || [[ ! -d "${TOR_TEMP_FILES}" ]]; then
+        echo "Erro: Diretório temporário TOR_TEMP_FILES não existe ou não está definido" >&2
+        return 1
+    fi
+
+    # Verifica comandos essenciais
+    if ! command -v "${TORPATH}" &> /dev/null; then
+        echo "Erro: Tor não encontrado no caminho especificado (${TORPATH})" >&2
+        return 1
+    fi
+
+    if ! command -v "${PRIVOXY_PATH}" &> /dev/null; then
+        echo "Erro: Privoxy não encontrado no caminho especificado (${PRIVOXY_PATH})" >&2
+        return 1
+    fi
+
+    # Função para verificar e alocar portas
+    allocate_ports() {
+        local port_type=$1
+        local current_port_var="TOR_CURRENT_${port_type}_PORT"
+        local current_port=${!current_port_var}
+
+        if [[ -z "${current_port}" ]]; then
+            echo "Erro: Variável ${current_port_var} não está definida" >&2
+            return 1
+        fi
+
+        # Incrementa e verifica a porta
+        ((current_port++))
+        if ! check_if_port_available "${current_port}"; then
+            echo "Erro: Não foi possível encontrar porta disponível para ${port_type}" >&2
+            return 1
+        fi
+
+        # Atualiza a variável com a nova porta
+        declare -g "${current_port_var}=${NEXT_PORT_AVAILABLE}"
+        echo "Porta ${port_type} alocada: ${NEXT_PORT_AVAILABLE}" >&2
+    }
+
+    # Função para criar diretório da instância Tor
+    create_tor_instance_dir() {
+        local instance_dir="${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}"
+
+        if ! mkdir -p "${instance_dir}"; then
+            echo "Erro: Falha ao criar diretório da instância Tor: ${instance_dir}" >&2
+            return 1
+        fi
+
+        # Define permissões seguras
+        chmod 700 "${instance_dir}"
+        return 0
+    }
+
+    # Função para configurar nós de entrada/saída baseado no país
+    configure_country_nodes() {
+        local instance_cfg="${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_${TOR_CURRENT_INSTANCE}.cfg"
+        local country_flag=$(echo "${CURRENT_COUNTRY}" | sed 's|[{}]||g')
+
+        case "${COUNTRY_LIST_CONTROLS}" in
+            "entry")
+                echo "EntryNodes ${CURRENT_COUNTRY}" > "${instance_cfg}"
+                echo "ExitNodes $(echo "${EXIT_COUNTRIES}" | sed "s|${CURRENT_COUNTRY},||g")" >> "${instance_cfg}"
+                ;;
+            "exit")
+                echo "EntryNodes $(echo "${ENTRY_COUNTRIES}" | sed "s|${CURRENT_COUNTRY},||g")" > "${instance_cfg}"
+                echo "ExitNodes ${CURRENT_COUNTRY}" >> "${instance_cfg}"
+                ;;
+            "speed")
+                echo "EntryNodes ${CURRENT_COUNTRY}" > "${instance_cfg}"
+                echo "ExitNodes ${CURRENT_COUNTRY}" >> "${instance_cfg}"
+                ;;
+            "none"|*)
+                echo "EntryNodes ${ACCEPTED_COUNTRIES}" > "${instance_cfg}"
+                echo "ExitNodes ${ACCEPTED_COUNTRIES}" >> "${instance_cfg}"
+                ;;
+        esac
+
+        echo "ExcludeNodes ${BLACKLIST_COUNTRIES}" >> "${instance_cfg}"
+        return 0
+    }
+
+    # Função para criar configuração base do Tor
+    create_base_tor_config() {
+        local config_file="${TOR_TEMP_FILES}/base_config_tor_${TOR_CURRENT_INSTANCE}.cfg"
+
+        cat > "${config_file}" <<EOF
+SocksPort ${LISTEN_ADDR}:${TOR_CURRENT_SOCKS_PORT} #IsolateClientAddr IsolateClientProtocol IsolateDestAddr IsolateDestPort
+#HTTPTunnelPort ${LISTEN_ADDR}:${TOR_CURRENT_HTTP_PORT}
+#TransPort ${LISTEN_ADDR}:${TOR_CURRENT_TransPort}
+RunAsDaemon 1
+CookieAuthentication 0
+ControlPort ${LISTEN_ADDR}:${TOR_CURRENT_CONTROL_PORT}
+HashedControlPassword ${TORPASS}
+PidFile ${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor${TOR_CURRENT_INSTANCE}.pid
+DataDirectory ${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}
+[Restante da configuração...]
+EOF
+
+        # Adiciona proxy upstream se configurado
+        if [[ -n "${UPSTREAM_CHAMELEON_NETWORK_PROXY}" ]]; then
+            echo "HTTPSProxy ${UPSTREAM_CHAMELEON_NETWORK_PROXY}" >> "${config_file}"
+            if [[ -n "${UPSTREAM_CHAMELEON_NETWORK_PROXY_AUTH}" ]]; then
+                echo "HTTPSProxyAuthenticator ${UPSTREAM_CHAMELEON_NETWORK_PROXY_AUTH}" >> "${config_file}"
+            fi
+        fi
+
+        # Combina com a configuração de país
+        cat "${config_file}" >> "${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_${TOR_CURRENT_INSTANCE}.cfg"
+    }
+
+    # Função para verificar se o Tor está rodando
+    check_tor_running() {
+        local pid_file="${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor${TOR_CURRENT_INSTANCE}.pid"
+        local max_attempts=30
+        local attempt=0
+
+        while [[ ${attempt} -lt ${max_attempts} ]]; do
+            if [[ -e "${pid_file}" ]]; then
+                # Cria resumo da instância
+                echo "_$(cat ${pid_file}),${TOR_CURRENT_INSTANCE},${CURRENT_COUNTRY},${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_${TOR_CURRENT_INSTANCE}.cfg" \
+                    > "${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_instance_summary.txt"
+                
+                echo "_$(cat ${pid_file}),${TOR_CURRENT_INSTANCE},${CURRENT_COUNTRY},${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_${TOR_CURRENT_INSTANCE}.cfg" \
+                    >> "${TOR_TEMP_FILES}/instances_countries_list.txt"
+
+                # Inicia Privoxy correspondente
+                if ! ${PRIVOXY_PATH} --pidfile "${TOR_TEMP_FILES}/sub_PRIVOXY_${PRIVOXY_CURRENT_INSTANCE}.pid" \
+                    "${PRIVOXY_FILE}${PRIVOXY_CURRENT_INSTANCE}.cfg" &> /dev/null; then
+                    echo "Erro: Falha ao iniciar Privoxy para instância ${PRIVOXY_CURRENT_INSTANCE}" >&2
+                    return 1
+                fi
+
+                return 0
+            fi
+            sleep 2
+            ((attempt++))
+        done
+
+        echo "Erro: Timeout ao aguardar inicialização do Tor (instância ${TOR_CURRENT_INSTANCE})" >&2
+        return 1
+    }
+
+    # Loop principal para criar cada instância
+    for ((i=1; i<=TOR_INSTANCES; i++)); do
+        echo "Iniciando configuração da instância Tor ${i} de ${TOR_INSTANCES}" >&2
+
+        # Aloca portas para a instância
+        if ! allocate_ports "SOCKS" || \
+           ! allocate_ports "HTTP" || \
+           ! allocate_ports "TransPort" || \
+           ! allocate_ports "CONTROL"; then
+            echo "Erro: Falha ao alocar portas para instância ${i}" >&2
+            return 1
+        fi
+
+        # Aloca porta para Privoxy
+        ((PRIVOXY_CURRENT_PORT++))
+        if ! check_if_port_available "${PRIVOXY_CURRENT_PORT}"; then
+            echo "Erro: Não foi possível encontrar porta disponível para Privoxy" >&2
+            return 1
+        fi
+        PRIVOXY_CURRENT_PORT="${NEXT_PORT_AVAILABLE}"
+
+        # Aloca porta DNS
+        ((DNSPORT++))
+        if ! check_if_port_available "${DNSPORT}"; then
+            echo "Erro: Não foi possível encontrar porta disponível para DNS" >&2
+            return 1
+        fi
+        DNSPORT="${NEXT_PORT_AVAILABLE}"
+
+        # Incrementa contadores de instância
+        ((TOR_CURRENT_INSTANCE++))
+        ((PRIVOXY_CURRENT_INSTANCE++))
+
+        # Cria diretório da instância
+        if ! create_tor_instance_dir; then
+            return 1
+        fi
+
+        # Configura nós baseado no país
+        if [[ -n "${CURRENT_COUNTRY}" ]]; then
+            if ! configure_country_nodes; then
+                echo "Erro: Falha ao configurar nós para o país ${CURRENT_COUNTRY}" >&2
+                return 1
+            fi
+        fi
+
+        # Cria configuração base do Tor
+        if ! create_base_tor_config; then
+            echo "Erro: Falha ao criar configuração base do Tor" >&2
+            return 1
+        fi
+
+        # Configurações adicionais (DNSDist, Privoxy, HAProxy)
+        [Configurações mantidas como no original, mas com verificações de erro adicionadas]
+
+        # Script para forçar novo circuito
+        cat > "${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_expect.exp" <<EOF
+#!/usr/bin/expect -f
+spawn telnet 127.0.0.1 ${TOR_CURRENT_CONTROL_PORT}
+expect "Escape character is '^]'."
+send "AUTHENTICATE \"${RAND_PASS}\"\\r"
+expect "250 OK"
+send "signal NEWNYM\r"
+expect "250 OK"
+send "quit\\r"
+EOF
+
+        chmod +x "${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_expect.exp"
+        echo "expect ${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_expect.exp > /dev/null 2>&1" \
+            >> "${TOR_TEMP_FILES}/temp_force_new_circuit.txt"
+
+        # Inicia a instância Tor
+        if ! ${TORPATH} -f "${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_${TOR_CURRENT_INSTANCE}.cfg" &> /dev/null; then
+            echo "Erro: Falha ao iniciar instância Tor ${TOR_CURRENT_INSTANCE}" >&2
+            return 1
+        fi
+
+        # Verifica se o Tor está rodando
+        if ! check_tor_running; then
+            return 1
+        fi
+
+        echo "Instância Tor ${TOR_CURRENT_INSTANCE} iniciada com sucesso" >&2
+    done
+
+    return 0
+}

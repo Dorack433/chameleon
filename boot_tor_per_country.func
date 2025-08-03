@@ -1,0 +1,80 @@
+#!/bin/bash
+
+###################################
+### FUNÇÃO BOOT TOR PER COUNTRY ###
+###################################
+# Inicia instâncias do Tor baseadas nos países selecionados
+# 
+# Dependências:
+#   - Requer a função random_country() já executada
+#   - Chama a função boot_tor_instances()
+#
+# Variáveis de entrada:
+#   - MY_COUNTRY_LIST: Lista de países selecionados
+#   - TOR_INSTANCES: Número de instâncias por país
+#   - COUNTRY_LIST_CONTROLS: Tipo de controle (entry/exit/speed/none)
+#
+# Códigos de retorno:
+#   0 - Sucesso
+#   1 - Erro: MY_COUNTRY_LIST vazia
+#   2 - Erro: Falha ao iniciar instâncias
+
+boot_tor_per_country() {
+    # Verificação inicial da lista de países
+    if [[ -z "${MY_COUNTRY_LIST}" ]]; then
+        cat >&2 <<EOF
+Erro: MY_COUNTRY_LIST está vazia ou não definida!
+
+Você deve definir a lista de códigos de países que serão usados.
+Exemplo: {US},{IT},{FR},{CA},{CH},{SE},{RU},{CH},{JP},{BR}
+
+Solução:
+1. Defina ACCEPTED_COUNTRIES com os países desejados
+2. Execute random_country() primeiro
+EOF
+        return 1
+    fi
+
+    # Verifica se TOR_INSTANCES está definido e é válido
+    if [[ -z "${TOR_INSTANCES}" ]] || ! [[ "${TOR_INSTANCES}" =~ ^[0-9]+$ ]] || [[ "${TOR_INSTANCES}" -le 0 ]]; then
+        echo "Erro: TOR_INSTANCES deve ser um número positivo" >&2
+        return 2
+    fi
+
+    # Verifica o tipo de controle de país
+    local valid_controls=("entry" "exit" "speed" "none")
+    if [[ -n "${COUNTRY_LIST_CONTROLS}" ]] && ! printf '%s\n' "${valid_controls[@]}" | grep -q "^${COUNTRY_LIST_CONTROLS}$"; then
+        echo "Aviso: COUNTRY_LIST_CONTROLS inválido. Usando padrão (none)" >&2
+        COUNTRY_LIST_CONTROLS="none"
+    fi
+
+    echo "Iniciando boot das instâncias Tor..." >&2
+
+    # Processa cada país da lista
+    while IFS= read -r country_code; do
+        # Verifica se o código do país não está vazio
+        if [[ -z "${country_code}" ]]; then
+            echo "Aviso: Código de país vazio encontrado, pulando..." >&2
+            continue
+        fi
+
+        # Configura o país atual baseado no tipo de controle
+        if [[ "${COUNTRY_LIST_CONTROLS}" != "none" ]]; then
+            CURRENT_COUNTRY="${country_code}"
+            echo "Iniciando ${TOR_INSTANCES} instância(s) Tor com controle ${COUNTRY_LIST_CONTROLS} para país: ${CURRENT_COUNTRY}" >&2
+        else
+            CURRENT_COUNTRY="{TOR_RANDOM_COUNTRY}"
+            echo "Iniciando ${TOR_INSTANCES} instância(s) Tor com país aleatório" >&2
+        fi
+
+        # Inicia as instâncias do Tor
+        if ! boot_tor_instances; then
+            echo "Erro: Falha ao iniciar instâncias Tor para país ${country_code}" >&2
+            return 2
+        fi
+
+    done <<< "${MY_COUNTRY_LIST//,/\\n}"  # Converte lista separada por vírgulas para linhas
+
+    echo "Todas instâncias Tor iniciadas com sucesso!" >&2
+    return 0
+}

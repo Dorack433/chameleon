@@ -1,0 +1,59 @@
+#!/bin/bash
+
+##################################################
+### <FUNÇÃO PARA SELECIONAR PAÍSES ALEATÓRIOS> ###
+##################################################
+#
+# Esta função seleciona N países diferentes da lista de países aceitos,
+# de forma aleatória e sem repetições, e os armazena em MY_COUNTRY_LIST.
+# Depois chama a função boot_tor_per_country para usar essa lista.
+
+random_country () {
+
+    # Verifica se as variáveis obrigatórias estão definidas
+    if [[ -z "${COUNTRIES}" || -z "${ACCEPTED_COUNTRIES}" ]]; then
+        echo "[ERRO] Variáveis COUNTRIES ou ACCEPTED_COUNTRIES não definidas."
+        return 1
+    fi
+
+    # Inicializa lista de países selecionados
+    MY_COUNTRY_LIST=""
+
+    # Converte a lista de países aceitos em array
+    IFS=',' read -r -a country_array <<< "${ACCEPTED_COUNTRIES}"
+
+    # Verifica se existem países suficientes para sortear
+    if (( ${#country_array[@]} < COUNTRIES )); then
+        echo "[ERRO] Quantidade de países aceitos (${#country_array[@]}) é menor que COUNTRIES (${COUNTRIES})."
+        return 1
+    fi
+
+    # Função interna para escolher um país aleatório que ainda não esteja na lista
+    choose_random_country() {
+        local candidate
+
+        while true; do
+            # Seleciona aleatoriamente um país da lista
+            candidate="${country_array[RANDOM % ${#country_array[@]}]}"
+
+            # Verifica se já foi selecionado
+            if ! grep -iqFx "$candidate" <<< "$MY_COUNTRY_LIST"; then
+                echo "$candidate"
+                return 0
+            fi
+            # Se já foi escolhido, tenta novamente (evita repetição)
+        done
+    }
+
+    # Loop para selecionar N países diferentes
+    for ((i = 0; i < COUNTRIES; i++)); do
+        selected_country=$(choose_random_country)
+        MY_COUNTRY_LIST+="${selected_country}"$'\n'
+    done
+
+    # Remove última quebra de linha
+    MY_COUNTRY_LIST=$(echo "$MY_COUNTRY_LIST" | sed '/^\s*$/d')
+
+    # Chama a função que inicia o Tor com a lista selecionada
+    boot_tor_per_country
+}

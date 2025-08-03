@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# ============================================================================= #
+# FUNÇÃO: loadbalancing_choice                                                  #
+# DESCRIÇÃO: Define o algoritmo de balanceamento de carga baseado no controle   #
+#            de países especificado na variável COUNTRY_LIST_CONTROLS.          #
+#            Ajusta também o modo de reutilização de conexões HTTP no HAProxy.  #
+# ============================================================================= #
+
+loadbalancing_choice() {
+    # Verifica se a variável de controle foi definida
+    if [[ -z "${COUNTRY_LIST_CONTROLS}" ]]; then
+        echo -e "\e[31m[ERRO]\e[0m A variável COUNTRY_LIST_CONTROLS não está definida!"
+        return 1
+    fi
+
+    # Define o algoritmo e o comportamento de reutilização de conexões
+    case "${COUNTRY_LIST_CONTROLS}" in
+        speed)
+            LOAD_BALANCE_ALGORITHM="leastconn"   # Conexão menos utilizada
+            HAPROXY_HTTP_REUSE="always"          # Reutiliza conexões HTTP
+            ;;
+        *)
+            LOAD_BALANCE_ALGORITHM="leastconn"   # Padrão: menor conexão
+            HAPROXY_HTTP_REUSE="never"           # Não reutiliza conexões
+            ;;
+    esac
+
+    # Exibe escolha para depuração
+    echo -e "\e[34m[INFO]\e[0m Algoritmo de balanceamento definido como: \e[1m${LOAD_BALANCE_ALGORITHM}\e[0m"
+    echo -e "\e[34m[INFO]\e[0m Reutilização HTTP configurada como: \e[1m${HAPROXY_HTTP_REUSE}\e[0m"
+}

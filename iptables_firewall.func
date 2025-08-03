@@ -1,0 +1,65 @@
+#!/bin/bash
+# ========================================================================================
+# FUNÇÃO: configurar_firewall
+# DESCRIÇÃO: Aplica regras de firewall com iptables para proteger o sistema.
+#            - Zera regras existentes
+#            - Define políticas padrão como DROP
+#            - Permite tráfego essencial (loopback, conexões estabelecidas)
+#            - Permite portas específicas para serviços Docker
+# ========================================================================================
+
+configurar_firewall() {
+    echo -e "\e[34m[+] Aplicando regras de firewall com iptables...\e[0m"
+
+    # Verifica se o iptables está instalado
+    if ! command -v iptables &>/dev/null; then
+        echo -e "\e[31m[ERRO] O comando iptables não está disponível no sistema.\e[0m"
+        return 1
+    fi
+
+    # Função interna para aplicar regras e verificar erro
+    aplicar_regra() {
+        local regra="$*"
+        if ! eval "$regra"; then
+            echo -e "\e[31m[ERRO] Falha ao aplicar regra:\e[0m $regra"
+            return 1
+        fi
+    }
+
+    # Limpa todas as regras existentes e chains personalizadas
+    aplicar_regra "iptables -F" || return 1  # Flush (limpa) regras
+    aplicar_regra "iptables -X" || return 1  # Remove chains personalizadas
+
+    # Define política padrão como DROP para todas as chains principais
+    aplicar_regra "iptables -P INPUT DROP" || return 1
+    aplicar_regra "iptables -P OUTPUT DROP" || return 1
+    aplicar_regra "iptables -P FORWARD DROP" || return 1
+
+    # Permite conexões já estabelecidas ou relacionadas (evita cortes em conexões válidas)
+    aplicar_regra "iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT -m comment --comment 'PERMITE_TODO_INPUT_JA_ESTABELECIDO'" || return 1
+    aplicar_regra "iptables -A OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT -m comment --comment 'PERMITE_TODO_OUTPUT_JA_ESTABELECIDO'" || return 1
+
+    # Permite tráfego local da interface loopback (comunicação interna do sistema)
+    aplicar_regra "iptables -A INPUT -i lo -j ACCEPT -m comment --comment 'PERMITE_TODO_INPUT_DA_LoopBack'" || return 1
+    aplicar_regra "iptables -A OUTPUT -o lo -j ACCEPT -m comment --comment 'PERMITE_TODO_OUTPUT_DA_LoopBack'" || return 1
+
+    # Permite portas específicas usadas pelo Docker para entrada (INPUT)
+    aplicar_regra "iptables -A INPUT -i eth0 -p tcp -m multiport --dports 63537,63536,63539,5353 -j ACCEPT -m comment --comment 'PERMITE_INPUT_DOCKER_PARA_O_CHAMELEON'" || return 1
+    aplicar_regra "iptables -A INPUT -i eth0 -p udp --dport 5353 -j ACCEPT -m comment --comment 'PERMITE_INPUT_DOCKER_PARA_DNS_DIST'" || return 1
+
+    # Bloqueia qualquer outro tráfego de entrada (não especificado anteriormente)
+    aplicar_regra "iptables -A INPUT -j DROP -m comment --comment 'BLOQUEIA_TODOS_OUTROS_INPUTS'" || return 1
+
+    # Bloqueia qualquer tráfego de encaminhamento (FORWARD)
+    aplicar_regra "iptables -A FORWARD -j DROP -m comment --comment 'BLOQUEIA_TODOS_OUTROS_FORWARDS'" || return 1
+
+    # Permite saída (OUTPUT) para gateway Docker (tanto TCP quanto UDP)
+    aplicar_regra "iptables -A OUTPUT -o eth0 -d 172.17.0.1 -p tcp -j ACCEPT -m comment --comment 'PERMITE_OUTPUT_PARA_GATEWAY_DOCKER'" || return 1
+    aplicar_regra "iptables -A OUTPUT -o eth0 -d 172.17.0.1 -p udp -j ACCEPT -m comment --comment 'PERMITE_OUTPUT_PARA_GATEWAY_DOCKER'" || return 1
+
+    # Bloqueia qualquer outro tráfego de saída (não especificado anteriormente)
+    aplicar_regra "iptables -A OUTPUT -j DROP -m comment --comment 'BLOQUEIA_TODOS_OUTROS_OUTPUTS'" || return 1
+
+    echo -e "\e[32m[✔] Regras de firewall aplicadas com sucesso.\e[0m"
+    return 0
+}

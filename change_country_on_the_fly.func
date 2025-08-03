@@ -1,0 +1,155 @@
+#!/bin/bash
+
+####################################################
+###    FUNÇÃO PARA ALTERAÇÃO DINÂMICA DE PAÍS    ###
+####################################################
+# Cria um loop infinito para rotacionar países das instâncias Tor
+# em intervalos aleatórios definidos no settings.cfg
+#
+# Dependências:
+#   - Arquivo settings.cfg com as configurações
+#   - Script force_new_country.func para mudança de país
+#
+# Variáveis necessárias:
+#   - KEEP_SAME_COUNTRY_FOR_AT_LEAST: Tempo mínimo antes de mudar (segundos)
+#   - CHANGE_COUNTRY_INTERVAL: Tempo máximo antes de mudar (segundos)
+#   - SAME_TIME_CHANGING_LIMIT: Limite de mudanças simultâneas
+#   - TOR_TEMP_FILES: Diretório para arquivos temporários
+
+# Importa configurações com verificação de erro
+if ! source settings.cfg 2>/dev/null; then
+    echo "Erro: Não foi possível carregar o arquivo settings.cfg" >&2
+    exit 1
+fi
+
+# Valida variáveis essenciais
+validate_vars() {
+    local required_vars=(
+        "KEEP_SAME_COUNTRY_FOR_AT_LEAST"
+        "CHANGE_COUNTRY_INTERVAL"
+        "SAME_TIME_CHANGING_LIMIT"
+        "TOR_TEMP_FILES"
+    )
+
+    for var in "${required_vars[@]}"; do
+        if [[ -z "${!var}" ]]; then
+            echo "Erro: Variável $var não está definida no settings.cfg" >&2
+            return 1
+        fi
+    done
+
+    # Verifica se o diretório temporário existe
+    if [[ ! -d "${TOR_TEMP_FILES}" ]]; then
+        echo "Erro: Diretório temporário não existe: ${TOR_TEMP_FILES}" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+# Função principal para alteração dinâmica de país
+dynamic_country_change() {
+    # Valida variáveis antes de continuar
+    if ! validate_vars; then
+        exit 1
+    fi
+
+    # Gera lista aleatória de instâncias para processar
+    if ! awk -F "," '{print $2}' /tmp/chameleon/instances_countries_list.txt | 
+       sed -e 's/^,//' -e 's/,$//' | sort -R > "${TOR_TEMP_FILES}/schedule_the_force_of_country.txt"; then
+        echo "Erro: Falha ao gerar lista de instâncias" >&2
+        exit 1
+    fi
+
+    # Processa cada instância Tor
+    while read -r instance_line_number; do
+        # Ignora linhas vazias
+        [[ -z "${instance_line_number}" ]] && continue
+
+        # Cria script de mudança para esta instância
+        create_change_script "${instance_line_number}"
+
+        # Executa o script em background
+        if ! bash "${TOR_TEMP_FILES}/forcing_change_country_instance_${instance_line_number}.sh" &; then
+            echo "Erro: Falha ao executar script para instância ${instance_line_number}" >&2
+        fi
+
+    done < "${TOR_TEMP_FILES}/schedule_the_force_of_country.txt"
+
+    # Limpa arquivo temporário
+    rm -f "${TOR_TEMP_FILES}/schedule_the_force_of_country.txt"
+}
+
+# Cria script individual para mudança de país
+create_change_script() {
+    local instance_line_number=$1
+    local script_file="${TOR_TEMP_FILES}/forcing_change_country_instance_${instance_line_number}.sh"
+
+    cat > "${script_file}" <<EOF
+#!/bin/bash
+
+# Loop infinito para mudança periódica de país
+while :; do
+    # Espera um tempo aleatório entre os intervalos definidos
+    sleep \$(shuf -i${KEEP_SAME_COUNTRY_FOR_AT_LEAST}-${CHANGE_COUNTRY_INTERVAL} -n1)
+
+    # Verifica se pode mudar agora (respeitando o limite de mudanças simultâneas)
+    check_and_change_country "${instance_line_number}"
+done
+
+# Função para verificar e executar a mudança de país
+check_and_change_country() {
+    local instance="\$1"
+    local force_new_country_running=\$(pgrep -fc 'force_new_country')
+    local CHANGE_NOW="NO"
+    local RETRY_CHANGE=0
+
+    # Tenta mudar imediatamente se estiver abaixo do limite
+    if [[ "\${force_new_country_running}" -lt "${SAME_TIME_CHANGING_LIMIT}" ]]; then
+        execute_country_change "\${instance}"
+        return
+    fi
+
+    # Se não, entra em modo de espera
+    while [[ "\${CHANGE_NOW}" == "NO" ]]; do
+        force_new_country_running=\$(pgrep -fc 'force_new_country')
+        
+        if [[ "\${force_new_country_running}" -lt "${SAME_TIME_CHANGING_LIMIT}" ]]; then
+            execute_country_change "\${instance}"
+            break
+        else
+            # Incrementa contador de tentativas
+            RETRY_CHANGE=\$((RETRY_CHANGE + 1))
+            
+            # Força mudança após muitas tentativas
+            if [[ "\${RETRY_CHANGE}" -gt 160 ]]; then
+                execute_country_change "\${instance}"
+                break
+            fi
+        fi
+        
+        sleep 2
+    done
+}
+
+# Executa a mudança de país para uma instância específica
+execute_country_change() {
+    local instance="\$1"
+    
+    # Mata processos anteriores desta instância
+    pkill -f "/chameleon/force_new_country.func \${instance}" || true
+    sleep 1
+    
+    # Executa a mudança de país
+    cd /chameleon && bash /chameleon/force_new_country.func "\${instance}" &
+}
+EOF
+
+    # Torna o script executável
+    chmod +x "${script_file}"
+}
+
+# Ponto de entrada principal
+dynamic_country_change
+
+exit 0

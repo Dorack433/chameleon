@@ -1,0 +1,74 @@
+#!/bin/bash
+####################################################################################
+# status.func - Exibe periodicamente o status das instâncias do CHAMELEON          #
+# Licença: BSD - Faça o que quiser, mas assuma a responsabilidade!                 #
+####################################################################################
+
+# Ativa boas práticas no shell script
+set -euo pipefail
+
+# Função para exibir mensagens de erro de forma padronizada
+erro() {
+    echo "[ERRO] $1" >&2
+    exit 1
+}
+
+# Verifica se o arquivo settings.cfg existe antes de tentar carregá-lo
+SETTINGS_FILE="settings.cfg"
+if [ ! -f "$SETTINGS_FILE" ]; then
+    erro "Arquivo de configuração '$SETTINGS_FILE' não encontrado."
+fi
+
+# Carrega as configurações definidas no arquivo settings.cfg
+source "$SETTINGS_FILE"
+
+# Verifica se a exibição de status está ativada
+if [ "${SHOW_STATUS:-no}" == "yes" ]; then
+
+    # Verifica se a variável de intervalo está definida e é um número válido
+    if ! [[ "$SHOW_CURRENT_INSTANCE_STATUS_EVERY" =~ ^[0-9]+$ ]]; then
+        erro "Valor inválido em SHOW_CURRENT_INSTANCE_STATUS_EVERY: deve ser um número inteiro."
+    fi
+
+    # Verifica se o diretório de arquivos temporários existe
+    if [ ! -d "${TOR_TEMP_FILES:-/dev/null}" ]; then
+        erro "Diretório TOR_TEMP_FILES não encontrado: ${TOR_TEMP_FILES}"
+    fi
+
+    # Verifica se o arquivo com a lista de instâncias/countries existe
+    INSTANCE_LIST_FILE="${TOR_TEMP_FILES}/instances_countries_list.txt"
+    if [ ! -f "$INSTANCE_LIST_FILE" ]; then
+        erro "Arquivo de status não encontrado: $INSTANCE_LIST_FILE"
+    fi
+
+    echo "[INFO] Iniciando exibição periódica de status..."
+
+    # Loop infinito para atualização contínua
+    while true; do
+        sleep "${SHOW_CURRENT_INSTANCE_STATUS_EVERY}"
+
+        # Revalida a flag SHOW_STATUS dinamicamente a cada iteração
+        if [ "${SHOW_STATUS:-no}" == "yes" ]; then
+            clear  # Limpa a tela a cada atualização (opcional)
+
+            echo "--------------------------------------------"
+            echo "------------ CHAMELEON v.0.0.1 -------------"
+            echo "--------------------------------------------"
+
+            # Exibe os dados de acesso e monitoramento
+            echo "Status URL      : http://127.0.0.1:${MASTER_PROXY_STAT_PORT}${MASTER_PROXY_STAT_URI}"
+            echo "User ID         : ${USER_ID}"
+            echo "Random Password : ${MASTER_PROXY_STAT_PWD}"
+            echo -n "Status - "
+            date
+            echo "--------------------------------------------"
+
+            # Exibe a lista de instâncias e países
+            cat "$INSTANCE_LIST_FILE"
+            echo "--------------------------------------------"
+            echo "Próxima atualização em ${SHOW_CURRENT_INSTANCE_STATUS_EVERY} segundos..."
+        fi
+    done
+else
+    echo "[INFO] Exibição de status desativada (SHOW_STATUS != yes)."
+fi

@@ -1,0 +1,62 @@
+#!/bin/bash
+
+######################################################
+### FUNÇÃO PARA VERIFICAR DISPONIBILIDADE DE PORTA ###
+######################################################
+# Verifica se uma porta de rede está disponível para uso
+# Se a porta solicitada estiver em uso, testa portas subsequentes até encontrar uma disponível
+#
+# Parâmetros:
+#   $1 - Número da porta inicial a verificar
+#
+# Variáveis globais:
+#   - NEXT_PORT_AVAILABLE: Armazena a primeira porta disponível encontrada
+#
+# Retorno:
+#   0 - Sucesso (porta disponível encontrada)
+#   1 - Erro (parâmetro inválido ou falha na verificação)
+
+check_if_port_available() {
+    # Validação do parâmetro de entrada
+    if [[ -z "$1" ]] || ! [[ "$1" =~ ^[0-9]+$ ]] || [[ "$1" -lt 1 ]] || [[ "$1" -gt 65535 ]]; then
+        echo "Erro: Número de porta inválido. Forneça uma porta entre 1 e 65535." >&2
+        return 1
+    fi
+
+    local requested_port="$1"
+    local port_free=0  # 0 = porta em uso, 1 = porta disponível
+    local max_attempts=100  # Limite máximo de tentativas para evitar loop infinito
+    local attempts=0
+
+    # Verifica se o comando netstat está disponível
+    if ! command -v netstat &> /dev/null; then
+        echo "Erro: Comando netstat não encontrado. Instale o pacote net-tools." >&2
+        return 1
+    fi
+
+    # Loop para encontrar porta disponível
+    while [[ ${port_free} -eq 0 && ${attempts} -lt ${max_attempts} ]]; do
+        # Verifica se a porta está em uso
+        if ! netstat -tuln | awk '{print $4}' | grep -q ":${requested_port}$"; then
+            port_free=1
+            NEXT_PORT_AVAILABLE="${requested_port}"
+            echo "Porta ${requested_port} disponível para uso." >&2
+            return 0
+        else
+            echo "Porta ${requested_port} está em uso. Verificando próxima porta..." >&2
+            ((requested_port++))
+            ((attempts++))
+            
+            # Verifica se a próxima porta é válida
+            if [[ ${requested_port} -gt 65535 ]]; then
+                echo "Erro: Todas as portas acima da solicitada estão ocupadas." >&2
+                return 1
+            fi
+        fi
+    done
+
+    if [[ ${attempts} -ge ${max_attempts} ]]; then
+        echo "Erro: Número máximo de tentativas (${max_attempts}) alcançado sem encontrar porta disponível." >&2
+        return 1
+    fi
+}

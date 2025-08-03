@@ -1,0 +1,77 @@
+#!/bin/bash
+help() {
+  banner  # Sua função de banner aqui
+  
+  cat <<EOF
+
+ 🦎 Chameleon - Ferramenta Avançada de Gerenciamento de Relays TOR
+
+ Ferramenta avançada de gerenciamento de múltiplas instâncias da rede TOR com controle 
+ granular de relays, balanceamento de carga, filtragem geoIP e múltiplos modos de operação.
+
+ 📌 Recursos Principais:
+  🔁 Balanceamento de carga entre múltiplas instâncias TOR
+  🌍 Controle detalhado de entrada e saída por país (geoIP)
+  🔒 Foco em privacidade e evasão de censura
+  🧠 Seleção inteligente de rotas com modos ajustáveis
+  🖥️ Interface de linha de comando (CLI) amigável
+
+ 🚀 Instalação:
+  1. Instale as dependências:
+     sudo apt-get install tor privoxy haproxy proxychains-ng expect dnsdist
+  2. Clone o repositório:
+     git clone https://github.com/seu-usuario/chameleon.git
+     cd chameleon
+  3. Configure o arquivo settings.cfg
+  4. Torne executável:
+     chmod +x chameleon.sh
+
+ 🛠️ Uso Básico:
+   ./chameleon.sh -i <instâncias> -c <países> -re <modo>
+
+ ⚙️ Opções Detalhadas:
+  -i  Número de instâncias por país (Inteiro ≥ 1)
+  -c  Número total de países utilizados (Inteiro ≥ 1)
+  -re Modo de relay (entry, exit, speed, none)
+
+ 🔄 Modos de Relay (-re):
+  1) entry: País específico como entrada, outro país como saída (round-robin)
+  2) exit:  País específico como saída, outro como entrada (round-robin)
+  3) speed: Mesmo país para entrada e saída (menor latência, menos segurança)
+  4) none:  Não força país específico (modo padrão)
+
+ 🌍 Configuração de Países:
+  Edite o arquivo de configuração e defina a variável PAÍSES_ACEITOS.
+  Exemplo para usar apenas relays dos EUA:
+     PAÍSES_ACEITOS={US}
+
+ 📦 Dependências:
+  1) tor           0.4.6.7  https://www.torproject.org/
+  2) privoxy       3.0.26   http://www.privoxy.org/
+  3) haproxy       1.7.5-2  https://www.haproxy.org/
+  4) proxychains   4.13-4   https://sourceforge.net/projects/proxychains/
+  5) expect        5.45     https://sourceforge.net/projects/expect/
+  6) dnsdist       1.1.0    https://dnsdist.org/
+
+ 🔍 Verificação de Status:
+  Acompanhe o estado e as rotas ativas via:
+     http://127.0.0.1:63537/chameleon_status
+
+ ⚠️ Avisos de Segurança:
+  - O modo 'speed' sacrifica privacidade ao usar o mesmo país como entrada e saída
+  - Países com poucos nós podem causar instabilidade
+  - Sempre verifique o painel de status
+
+ Exemplos de Uso:
+  1) Balanceamento com foco em privacidade:
+     \$ ./chameleon.sh -i 3 -c 5 -re exit
+
+  2) Máxima velocidade:
+     \$ ./chameleon.sh -i 2 -c 1 -re speed
+
+  3) Configuração equilibrada:
+     \$ ./chameleon.sh -i 1 -c 10 -re none
+EOF
+
+  exit 1
+}

@@ -1,0 +1,168 @@
+#!/bin/bash
+# ========================================================================================
+# ARQUIVO: force_new_country.func
+# DESCRIÇÃO: Força a troca de país das instâncias Tor em execução para minimizar o risco
+#              de correlação de tráfego por relés comprometidos.
+# ========================================================================================
+
+# Carrega configurações definidas pelo usuário
+source settings.cfg
+
+# Obtém a política de seleção de país (entry, exit, speed, none)
+COUNTRY_LIST_CONTROLS="$(grep -oP 'COUNTRY_LIST_CONTROLS=\K.*' "${TOR_TEMP_FILES}/initial_user_settings.txt" | sed 's/"//g')"
+
+# ----------------------------------------------------------------------------------------
+# Função: select_next_country
+# Descrição: Seleciona um país aleatório que não está nas listas de usados e atuais
+# ----------------------------------------------------------------------------------------
+select_next_country() {
+    while true; do
+        NEXT_COUNTRY=$(shuf -n 1 "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt")
+        [[ -z "$NEXT_COUNTRY" ]] && echo "[ERRO] Nenhum país disponível em AVAILABLE_COUNTRIES.txt" && return 1
+
+        # Remove chaves
+        NEXT_COUNTRY_CLEAN=$(echo "$NEXT_COUNTRY" | tr -d '{}')
+
+        # Verifica se país já foi usado ou está ativo
+        grep -iq "$NEXT_COUNTRY" "${TOR_TEMP_FILES}/current_country_list.txt" && continue
+        grep -iq "$NEXT_COUNTRY" "${TOR_TEMP_FILES}/used_country_list.txt" && continue
+
+        # Atualiza listas
+        grep -iv "$NEXT_COUNTRY" "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt" > "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES_TMP.txt"
+        mv "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES_TMP.txt" "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt"
+
+        echo "$NEXT_COUNTRY" >> "${TOR_TEMP_FILES}/used_country_list.txt"
+        sort -u "${TOR_TEMP_FILES}/used_country_list.txt" -o "${TOR_TEMP_FILES}/used_country_list.txt"
+        break
+    done
+
+    return 0
+}
+
+# ----------------------------------------------------------------------------------------
+# Função: check_if_new_tor_is_running
+# Descrição: Aguarda até que a nova instância Tor esteja operacional
+# ----------------------------------------------------------------------------------------
+check_if_new_tor_is_running() {
+    local pid_file="${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor${TOR_CURRENT_INSTANCE}.pid"
+
+    echo "[INFO] Aguardando inicialização da instância Tor $TOR_CURRENT_INSTANCE..."
+
+    while [[ ! -f "$pid_file" ]]; do
+        sleep 3
+    done
+
+    local tor_pid
+    tor_pid=$(cat "$pid_file")
+
+    echo "_$(cat $pid_file),${TOR_CURRENT_INSTANCE},${NEXT_COUNTRY},${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_${TOR_CURRENT_INSTANCE}.cfg" \
+        > "${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor_instance_summary.txt"
+
+    cat ${TOR_TEMP_FILES}/tor*/tor_instance_summary.txt > "${TOR_TEMP_FILES}/instances_countries_list.txt"
+    cut -d ',' -f3 "${TOR_TEMP_FILES}/instances_countries_list.txt" > "${TOR_TEMP_FILES}/current_country_list.txt"
+
+    sleep 7  # tempo para o HAProxy detectar
+
+    echo "[INFO] Inicialização da instância $TOR_CURRENT_INSTANCE concluída"
+    return 0
+}
+
+# ----------------------------------------------------------------------------------------
+# Função: change_country_on_the_fly
+# Descrição: Executa todo o processo de troca de país para uma instância Tor
+# ----------------------------------------------------------------------------------------
+change_country_on_the_fly() {
+    local TARGET_INSTANCE_REQUESTED="$1"
+    local COUNTRY_TARGET RUNNING_COUNTRY NEXT_CFG CONFIG_TARGET PID_TARGET PID_PRIVOXY_TARGET
+
+    [[ -z "$TARGET_INSTANCE_REQUESTED" ]] && echo "[ERRO] Instância não especificada" && return 1
+
+    PRIVOXY_CURRENT_INSTANCE="$TARGET_INSTANCE_REQUESTED"
+
+    # Atualiza listas em memória
+    grep -v '^$' "${TOR_TEMP_FILES}"/tor*/tor_instance_summary.txt > "${TOR_TEMP_FILES}/instances_countries_list.txt"
+    COUNTRY_TARGET=$(grep ",$TARGET_INSTANCE_REQUESTED," "${TOR_TEMP_FILES}/instances_countries_list.txt" | cut -d ',' -f3)
+    RUNNING_COUNTRY=$(echo "$COUNTRY_TARGET" | tr -d '{}')
+
+    # Verifica se precisa selecionar novo país
+    echo "$ACCEPTED_COUNTRIES" | tr ',' '\n' > "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt"
+    if [[ -s "${TOR_TEMP_FILES}/used_country_list.txt" ]]; then
+        while read -r country; do
+            grep -iv "$country" "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt" > "${TOR_TEMP_FILES}/tmp.txt"
+            mv "${TOR_TEMP_FILES}/tmp.txt" "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt"
+        done < "${TOR_TEMP_FILES}/used_country_list.txt"
+    fi
+
+    if [[ ! -s "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt" ]]; then
+        echo "$ACCEPTED_COUNTRIES" | tr ',' '\n' > "${TOR_TEMP_FILES}/AVAILABLE_COUNTRIES.txt"
+        cut -d ',' -f3 "${TOR_TEMP_FILES}/instances_countries_list.txt" | sort -u > "${TOR_TEMP_FILES}/used_country_list.txt"
+    fi
+
+    select_next_country || return 1
+
+    # Aplica configuração baseada na política
+    CONFIG_TARGET="${TOR_TEMP_FILES}/base_config_tor_${TARGET_INSTANCE_REQUESTED}.cfg"
+    NEXT_CFG="${TOR_TEMP_FILES}/temp_config_tor_${TARGET_INSTANCE_REQUESTED}.tmp"
+
+    case "$COUNTRY_LIST_CONTROLS" in
+        entry)
+            echo "EntryNodes $NEXT_COUNTRY" > "$NEXT_CFG"
+            echo "ExitNodes $(echo "$EXIT_COUNTRIES" | sed "s|$NEXT_COUNTRY,||g")" >> "$NEXT_CFG"
+            ;;
+        exit)
+            echo "EntryNodes $(echo "$ENTRY_COUNTRIES" | sed "s|$NEXT_COUNTRY,||g")" > "$NEXT_CFG"
+            echo "ExitNodes $NEXT_COUNTRY" >> "$NEXT_CFG"
+            ;;
+        speed)
+            echo "EntryNodes $NEXT_COUNTRY" > "$NEXT_CFG"
+            echo "ExitNodes $NEXT_COUNTRY" >> "$NEXT_CFG"
+            echo "ExcludeNodes $BLACKLIST_COUNTRIES,$(echo "$ACCEPTED_COUNTRIES" | sed "s|$NEXT_COUNTRY,||g")" >> "$NEXT_CFG"
+            ;;
+        none|*)
+            echo "EntryNodes $ACCEPTED_COUNTRIES" > "$NEXT_CFG"
+            echo "ExitNodes $ACCEPTED_COUNTRIES" >> "$NEXT_CFG"
+            ;;
+    esac
+    echo "ExcludeNodes $BLACKLIST_COUNTRIES" >> "$NEXT_CFG"
+
+    # Mata instância atual
+    TOR_CURRENT_INSTANCE="$TARGET_INSTANCE_REQUESTED"
+    PID_TARGET=$(<"${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}/tor${TOR_CURRENT_INSTANCE}.pid")
+    PID_PRIVOXY_TARGET=$(<"${TOR_TEMP_FILES}/sub_PRIVOXY_${PRIVOXY_CURRENT_INSTANCE}.pid")
+
+    kill -s SIGCHLD "$PID_TARGET" "$PID_PRIVOXY_TARGET" 2>/dev/null
+    sleep 2
+    kill -9 "$PID_TARGET" "$PID_PRIVOXY_TARGET" 2>/dev/null
+
+    # Prepara diretório novo
+    TOR_DIR="${TOR_TEMP_FILES}/tor${TOR_CURRENT_INSTANCE}"
+    rm -rf "$TOR_DIR"
+    mkdir -p "$TOR_DIR"
+    chown -R "$USER_ID" "$TOR_DIR"
+
+    # Gera novo arquivo de configuração
+    cat "$CONFIG_TARGET" "$NEXT_CFG" > "$TOR_DIR/tor_${TOR_CURRENT_INSTANCE}.cfg"
+    mv "${TOR_TEMP_FILES}/tor_expect.exp_${TOR_CURRENT_INSTANCE}" "$TOR_DIR/tor_expect.exp" 2>/dev/null
+    chmod 700 -R "$TOR_DIR"
+
+    # Inicia nova instância Tor
+    "$TORPATH" -f "$TOR_DIR/tor_${TOR_CURRENT_INSTANCE}.cfg" 2>/dev/null &
+
+    # Espera instância subir
+    check_if_new_tor_is_running
+
+    # Inicia Privoxy
+    "$PRIVOXY_PATH" --pidfile "${TOR_TEMP_FILES}/sub_PRIVOXY_${PRIVOXY_CURRENT_INSTANCE}.pid" \
+        "${PRIVOXY_FILE}${PRIVOXY_CURRENT_INSTANCE}.cfg" &
+}
+
+# ----------------------------------------------------------------------------------------
+# EXECUÇÃO INICIAL
+# ----------------------------------------------------------------------------------------
+change_country_on_the_fly "$1"
+
+# Atualiza lista geral em memória
+grep -v '^$' "${TOR_TEMP_FILES}"/tor*/tor_instance_summary.txt > "${TOR_TEMP_FILES}/instances_countries_list.txt"
+
+# Aguarda inicialização completa
+sleep 15

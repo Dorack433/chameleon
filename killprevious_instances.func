@@ -1,0 +1,91 @@
+#!/bin/bash
+# ==========================================================================
+# Arquivo: killprevious_instances.func
+# Objetivo: Encerrar todas as instâncias anteriores relacionadas ao projeto
+# ==========================================================================
+
+# Carrega as configurações
+source settings.cfg
+
+# ========================
+# Função: kill_all
+# Descrição: Encerra todos os processos que contenham um nome específico
+# ========================
+kill_all() {
+    local process_name="$1"
+    local tmp_file="/tmp/bh_killall_list.txt"
+
+    # Validação do nome do processo
+    if [[ -z "$process_name" ]]; then
+        echo "[ERRO] Nome do processo não especificado para kill_all"
+        return 1
+    fi
+
+    # Lista PIDs de processos correspondentes, excluindo o grep
+    ps aux | grep -i "$process_name" | grep -v grep | awk '{print $2}' > "$tmp_file"
+
+    # Verifica se o arquivo tem conteúdo
+    if [[ ! -s "$tmp_file" ]]; then
+        echo "[INFO] Nenhum processo encontrado para: $process_name"
+        rm -f "$tmp_file"
+        return 0
+    fi
+
+    # Itera pelos PIDs e tenta matá-los
+    while read -r pid; do
+        if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+            echo "[INFO] Matando processo $pid relacionado a: $process_name"
+            
+            # Tenta encerrar de forma amigável
+            kill -s SIGTERM "$pid" > /dev/null 2>&1 || true
+            sleep 0.5
+
+            # Força o encerramento se necessário
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" > /dev/null 2>&1 || echo "[ERRO] Falha ao forçar término do processo $pid"
+            fi
+        fi
+    done < "$tmp_file"
+
+    # Remove o arquivo temporário
+    rm -f "$tmp_file"
+    return 0
+}
+
+# ================================
+# Função principal: killprevious_instances
+# ================================
+killprevious_instances() {
+    echo "[INFO] Iniciando encerramento de instâncias anteriores..."
+
+    # Lista de nomes de processos a encerrar
+    local process_list=(
+        "force_new_country.func"
+        "change_country_on_the_fly.func"
+        "force_new_circuit.sh"
+        "forcing_change_country_instance_"
+        "tor -f"
+        "privoxy "
+        "proxychains"
+        "haproxy "
+        "dnsdist "
+        "telnet "
+        "sleep"
+        "status.func"
+    )
+
+    for proc in "${process_list[@]}"; do
+        kill_all "$proc"
+    done
+
+    # Remove diretório temporário do TOR, se existir
+    if [[ -d "$TOR_TEMP_FILES" ]]; then
+        echo "[INFO] Removendo diretório temporário: $TOR_TEMP_FILES"
+        rm -rf "$TOR_TEMP_FILES" || echo "[ERRO] Falha ao remover $TOR_TEMP_FILES"
+    fi
+
+    echo "[INFO] Encerramento de instâncias concluído."
+}
+
+# Executa a função principal
+killprevious_instances

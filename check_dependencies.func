@@ -1,0 +1,63 @@
+#!/bin/bash
+##########################################################
+# Função: check_dependencies
+# Descrição: Verifica se as dependências estão instaladas
+# Retorna: Lista de pacotes/dependências faltantes
+##########################################################
+
+check_dependencies () {
+    local missing=()
+    echo "[*] Verificando dependências..."
+
+    # Lista de pacotes do sistema
+    local system_pkgs=(
+        build-essential automake autoconf libevent-dev
+        libssl-dev zlib1g-dev libpcre3-dev libcap-dev
+        bison flex pkg-config wget curl git libnsl-dev
+        libgnutls28-dev golang-go cmake python3 python3-pip
+        libedit-dev libreadline-dev
+    )
+
+    # Verifica pacotes do sistema
+    for pkg in "${system_pkgs[@]}"; do
+        if ! dpkg -l | grep -q " $pkg "; then
+            missing+=("$pkg")
+        fi
+    done
+
+    # Lista de binários necessários e seus comandos de verificação
+    declare -A binaries=(
+        ["tor"]="tor --version"
+        ["privoxy"]="privoxy --version"
+        ["haproxy"]="haproxy -v"
+        ["proxychains"]="proxychains4 -h"
+        ["expect"]="expect -v"
+        ["dnsdist"]="dnsdist --version"
+        ["obfs4proxy"]="obfs4proxy -version"
+    )
+
+    # Verifica binários
+    for bin in "${!binaries[@]}"; do
+        if ! command -v "$bin" &> /dev/null; then
+            missing+=("$bin")
+        fi
+    done
+
+    # Exibe resultados
+    if [ ${#missing[@]} -eq 0 ]; then
+        echo "[✔] Todas as dependências estão instaladas."
+    else
+        echo "[!] Dependências faltantes:"
+        for item in "${missing[@]}"; do
+            echo "  - $item"
+        done
+    fi
+
+    return ${#missing[@]}
+}
+
+# Exemplo de uso:
+# check_dependencies
+# if [ $? -ne 0 ]; then
+#     echo "Algumas dependências estão faltando."
+# fi

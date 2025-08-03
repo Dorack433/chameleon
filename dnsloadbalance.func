@@ -1,0 +1,57 @@
+#!/bin/bash
+#
+# ==========================================================================================
+# FUNÇÃO: dnsloadbalance.func
+# DESCRIÇÃO: Inicializa o DNSDIST para balanceamento de carga DNS com configurações seguras
+# ==========================================================================================
+
+# Carrega as variáveis de configuração definidas externamente
+source settings.cfg
+
+# ========================================================================================
+# FUNÇÃO PRINCIPAL: inicia_dnsdist
+# DESCRIÇÃO: Verifica parâmetros essenciais e inicia o serviço DNSDIST
+# ========================================================================================
+inicia_dnsdist() {
+
+    # Verifica se o caminho para o arquivo de configuração existe
+    if [[ ! -f "${TOR_TEMP_FILES}/dnsdist.conf" ]]; then
+        echo "[ERRO] Arquivo de configuração '${TOR_TEMP_FILES}/dnsdist.conf' não encontrado."
+        return 1
+    fi
+
+    # Verifica se as variáveis essenciais estão definidas
+    if [[ -z "$USER_UID" || -z "$USER_GID" ]]; then
+        echo "[ERRO] Variáveis USER_UID ou USER_GID não estão definidas no settings.cfg."
+        return 1
+    fi
+
+    if [[ -z "$DNSDIST_SERVER_LISTEN" || -z "$DNSDIST_SERVER_PORT" ]]; then
+        echo "[ERRO] Variáveis DNSDIST_SERVER_LISTEN ou DNSDIST_SERVER_PORT não estão definidas."
+        return 1
+    fi
+
+    # Inicia o DNSDIST com os parâmetros definidos
+    echo "[INFO] Iniciando DNSDIST com balanceamento de carga DNS..."
+    dnsdist \
+        --disable-syslog \
+        --uid "$USER_UID" \
+        --gid "$USER_GID" \
+        -C "${TOR_TEMP_FILES}/dnsdist.conf" \
+        --local="${DNSDIST_SERVER_LISTEN}:${DNSDIST_SERVER_PORT}"
+
+    # Verifica o status de saída do comando
+    if [[ $? -ne 0 ]]; then
+        echo "[ERRO] Falha ao iniciar o DNSDIST. Verifique o arquivo de configuração e permissões."
+        return 1
+    fi
+
+    echo "[OK] DNSDIST iniciado com sucesso em ${DNSDIST_SERVER_LISTEN}:${DNSDIST_SERVER_PORT}"
+    return 0
+}
+
+# ========================================================================================
+# EXECUÇÃO
+# ========================================================================================
+
+inicia_dnsdist

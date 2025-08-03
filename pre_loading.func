@@ -1,0 +1,153 @@
+#!/bin/bash
+# ======================================================================================== #
+# ARQUIVO: pre_loading.func                                                                #
+# DESCRIÇÃO: Função de pré-carregamento para preparar ambiente e arquivos necessários      #
+# ======================================================================================== #
+
+pre_loading () {
+
+    # Garante criação de diretório temporário limpo
+    if [ -d "${TOR_TEMP_FILES}" ]; then
+        rm -rf "${TOR_TEMP_FILES}" || { echo "[ERRO] Falha ao remover ${TOR_TEMP_FILES}"; return 1; }
+    fi
+    mkdir -p "${TOR_TEMP_FILES}" || { echo "[ERRO] Falha ao criar ${TOR_TEMP_FILES}"; return 1; }
+
+    # Configura diretório e arquivo do proxychains
+    mkdir -p "${HOME}/.proxychains"
+    : > "${PROXYCHAINS_FILE}"
+
+    # Ajusta permissões
+    chown -R "${USER_ID}" "${TOR_TEMP_FILES}"
+    chmod 700 -R "${TOR_TEMP_FILES}"
+
+    # Script para forçar novo circuito TOR (delay proporcional ao nº de instâncias)
+    {
+        echo "#!/bin/bash"
+        echo "sleep $((COUNTRIES * TOR_INSTANCES))"
+        echo "while :; do"
+    } > "${TOR_TEMP_FILES}/force_new_circuit.sh"
+
+    : > "${TOR_TEMP_FILES}/temp_force_new_circuit.txt"
+
+    # Proxychains base config
+    {
+        echo "strict_chain"
+        echo "proxy_dns"
+        echo "tcp_read_time_out ${MINIMUM_TIMEOUT}"
+        echo "tcp_connect_time_out ${MINIMUM_TIMEOUT}"
+        echo "[ProxyList]"
+        echo "http 127.0.0.1 ${MASTER_PROXY_HTTP_PORT}"
+    } > "${PROXYCHAINS_FILE}"
+
+    # Inicializa arquivos de controle
+    : > "${TOR_TEMP_FILES}/instances_countries_list.txt"
+    : > "${TOR_TEMP_FILES}/haproxy_socks_backend.txt"
+    : > "${TOR_TEMP_FILES}/haproxy_http_backend.txt"
+    : > "${TOR_TEMP_FILES}/haproxy_transparent_backend.txt"
+
+    # Gera configuração base do HAProxy (MASTER PROXY)
+    {
+        echo "global"
+        echo "    daemon"
+        echo "    maxconn 2000"
+        echo "    maxcompcpuusage 50"
+
+        echo "defaults"
+        echo "    timeout check ${MINIMUM_TIMEOUT}s"
+
+        echo "userlist L1"
+        echo "    group G1 users ${USER_ID}"
+        echo "    user ${USER_ID} insecure-password ${MASTER_PROXY_PASSWORD}"
+
+        echo "resolvers tor_dns"
+        echo "   nameserver tor_dns1 127.0.0.1:${DNSDIST_SERVER_PORT}"
+        echo "   resolve_retries ${RETRIES}"
+        echo "   timeout retry ${DNS_TIMEOUT}s"
+        echo "   timeout resolve ${DNS_TIMEOUT}s"
+        echo "   hold valid ${MINIMUM_TIMEOUT}s"
+        echo "   hold other 1s"
+        echo "   hold refused 1s"
+        echo "   hold nx 1s"
+        echo "   hold timeout 1s"
+        echo "   hold obsolete 1s"
+
+        echo "listen stats"
+        echo "    mode http"
+        echo "    bind ${MASTER_PROXY_STAT_LISTEN}:${MASTER_PROXY_STAT_PORT}"
+        echo "    stats auth ${USER_ID}:${MASTER_PROXY_STAT_PWD}"
+        echo "    stats enable"
+        echo "    stats hide-version"
+        echo "    stats realm DCLABS\ CHAMELEON"
+        echo "    stats uri ${MASTER_PROXY_STAT_URI}"
+        echo "    timeout connect ${MINIMUM_TIMEOUT}s"
+        echo "    timeout server ${MINIMUM_TIMEOUT}s"
+        echo "    timeout client ${MINIMUM_TIMEOUT}s"
+        echo "    stats refresh 2s"
+    } > "${MASTER_PROXY_CFG}"
+
+    # SOCKS proxy config
+    {
+        echo "frontend TOR_SOCKS_INSTANCES"
+        echo "    mode tcp"
+        echo "    bind ${MASTER_PROXY_LISTEN}:${MASTER_PROXY_SOCKS_PORT}"
+        echo "    default_backend TOR_SOCKS_INSTANCES"
+        echo "    timeout client ${MASTER_PROXY_CLIENT_TIMEOUT}s"
+
+        echo "backend TOR_SOCKS_INSTANCES"
+        echo "    mode tcp"
+        echo "    option redispatch"
+        echo "    retry-on all-retryable-errors"
+        echo "    http-request disable-l7-retry if METH_POST"
+        echo "    retries $((RETRIES * COUNTRIES * TOR_INSTANCES))"
+        echo "    timeout connect 5s"
+        echo "    timeout server 5s"
+        echo "    timeout http-request ${MASTER_PROXY_SERVER_TIMEOUT}s"
+        echo "    balance ${LOAD_BALANCE_ALGORITHM}"
+
+        if [ "${HAPROXY_HTTP_REUSE}" == "never" ]; then
+            echo "    option http-server-close"
+        else
+            echo " "
+        fi
+
+        echo "    option tcp-check"
+    } > "${TOR_TEMP_FILES}/haproxy_TOR_SOCKS_PROXY.txt"
+
+    # HTTP proxy config
+    {
+        echo "frontend TOR_HTTP_SOCKS_INSTANCE"
+        echo "    mode http"
+        echo "    bind ${MASTER_PROXY_LISTEN}:${MASTER_PROXY_HTTP_PORT}"
+        echo "    default_backend TOR_HTTP_SOCKS_INSTANCE"
+        echo "    timeout client $((MASTER_PROXY_SERVER_TIMEOUT + RETRIES * COUNTRIES * TOR_INSTANCES))s"
+        echo "    timeout http-request $((MASTER_PROXY_SERVER_TIMEOUT + RETRIES * COUNTRIES * TOR_INSTANCES))s"
+        echo "    option http-keep-alive"
+
+        echo "backend TOR_HTTP_SOCKS_INSTANCE"
+        echo "    mode http"
+        echo "    option redispatch"
+        echo "    retry-on all-retryable-errors"
+        echo "    http-request disable-l7-retry if METH_POST"
+        echo "    retries $((RETRIES * COUNTRIES * TOR_INSTANCES))"
+        echo "    timeout connect 5s"
+        echo "    timeout server 5s"
+        echo "    timeout http-request ${MINIMUM_TIMEOUT}s"
+        echo "    balance ${LOAD_BALANCE_ALGORITHM}"
+
+        if [ "${HAPROXY_HTTP_REUSE}" == "never" ]; then
+            echo " http-reuse never"
+            echo "    option http-server-close"
+        else
+            echo " http-reuse safe"
+            echo "    option http-keep-alive"
+        fi
+
+        echo "    option httpchk GET https://${HEALTH_CHECK_URL} HTTP/1.1\r\nHost: $(echo "${HEALTH_CHECK_URL}" | cut -d ":" -f 2 | sed 's|/||g')\r\nUser-Agent: ${SPOOFED_USER_AGENT}\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nAccept-Language: en-US,en;q=0.5\r\nAccept-Encoding: gzip, deflate\r\nConnection: keep-alive\r\nUpgrade-Insecure-Requests: 1"
+    } > "${TOR_TEMP_FILES}/haproxy_TOR_HTTP_PROXY.txt"
+
+    # Limpa DNSDIST e move configuração do usuário
+    : > "${TOR_TEMP_FILES}/dnsdist.conf"
+    mv "/tmp/initial_user_settings.txt" "${TOR_TEMP_FILES}/initial_user_settings.txt" 2>/dev/null || {
+        echo "[ERRO] Falha ao mover configurações iniciais"; return 1;
+    }
+}

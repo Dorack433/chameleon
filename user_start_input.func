@@ -1,0 +1,87 @@
+#!/bin/bash
+
+###############################################################################
+# Função: user_start_input                                                    #
+# Descrição: Processa a entrada do usuário ao iniciar o script principal      #
+# Licença: BSD - Faça o que quiser, mas assuma a responsabilidade!            #
+###############################################################################
+
+user_start_input() {
+    # Ativa boas práticas para segurança no shell script
+    set -euo pipefail
+
+    # Função para exibir ajuda com paginação
+    mostrar_ajuda() {
+        help | more
+        echo ""
+        exit 1
+    }
+
+    # Verifica se não há argumentos ou se só há 1 (exibe ajuda)
+    if [[ $# -eq 0 || $# -eq 1 ]]; then
+        mostrar_ajuda
+    fi
+
+    # Inicializa variáveis com valores padrão
+    TOR_INSTANCES=""
+    COUNTRIES=""
+    COUNTRY_LIST_CONTROLS=""
+
+    # Loop para processar todos os parâmetros passados
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -i)
+                if [[ -n "${2:-}" && "$2" =~ ^[0-9]+$ ]]; then
+                    TOR_INSTANCES="$2"
+                    shift 2
+                else
+                    echo "[ERRO] Valor inválido para -i. Exemplo de uso: -i 1"
+                    mostrar_ajuda
+                fi
+                ;;
+            -c)
+                if [[ -n "${2:-}" && "$2" =~ ^[0-9]+$ ]]; then
+                    COUNTRIES="$2"
+                    shift 2
+                else
+                    echo "[ERRO] Valor inválido para -c. Exemplo de uso: -c 10"
+                    mostrar_ajuda
+                fi
+                ;;
+            -re)
+                if [[ -n "${2:-}" ]]; then
+                    COUNTRY_LIST_CONTROLS="$2"
+                    shift 2
+                else
+                    echo "[ERRO] Valor inválido para -re. Exemplo de uso: -re exit"
+                    mostrar_ajuda
+                fi
+                ;;
+            -h|--help)
+                mostrar_ajuda
+                ;;
+            *)
+                echo "[ERRO] Parâmetro não reconhecido: $1"
+                mostrar_ajuda
+                ;;
+        esac
+    done
+
+    # Valida se todas as variáveis obrigatórias foram preenchidas
+    if [[ -z "$TOR_INSTANCES" || -z "$COUNTRIES" || -z "$COUNTRY_LIST_CONTROLS" ]]; then
+        echo "[ERRO] Todos os parâmetros -i, -c e -re devem ser fornecidos."
+        mostrar_ajuda
+    fi
+
+    # Calcula o total de instâncias e salva configurações no arquivo temporário
+    TOTAL_INSTANCES=$(( TOR_INSTANCES * COUNTRIES ))
+
+    cat <<EOF > /tmp/initial_user_settings.txt
+TOR_INSTANCES="${TOR_INSTANCES}"
+COUNTRIES="${COUNTRIES}"
+COUNTRY_LIST_CONTROLS="${COUNTRY_LIST_CONTROLS}"
+TOTAL_INSTANCES=${TOTAL_INSTANCES}
+EOF
+
+    echo "[INFO] Configurações salvas em /tmp/initial_user_settings.txt"
+}
