@@ -1,59 +1,103 @@
 #!/bin/bash
 
-##################################################
-### <FUNÇÃO PARA SELECIONAR PAÍSES ALEATÓRIOS> ###
-##################################################
-#
-# Esta função seleciona N países diferentes da lista de países aceitos,
-# de forma aleatória e sem repetições, e os armazena em MY_COUNTRY_LIST.
-# Depois chama a função boot_tor_per_country para usar essa lista.
+################################################
+### FUNÇÃO PARA SELECIONAR UM PAÍS ALEATÓRIO ###
+################################################
+# Função que seleciona aleatoriamente países da lista ACCEPTED_COUNTRIES
+# Retorna 0 em caso de sucesso, 1 em caso de erro
+# Variáveis dependentes:
+#   - COUNTRIES: Quantidade de países a selecionar
+#   - ACCEPTED_COUNTRIES: Lista de países aceitos separados por vírgula
+# Saída:
+#   - Define MY_COUNTRY_LIST com os países selecionados
+#   - Chama boot_tor_per_country() ao finalizar
 
-random_country () {
-
-    # Verifica se as variáveis obrigatórias estão definidas
-    if [[ -z "${COUNTRIES}" || -z "${ACCEPTED_COUNTRIES}" ]]; then
-        echo "[ERRO] Variáveis COUNTRIES ou ACCEPTED_COUNTRIES não definidas."
+random_country() {
+    # Verifica se variáveis necessárias estão definidas
+    if [[ -z "${COUNTRIES}" ]]; then
+        echo "Erro: Variável COUNTRIES não está definida" >&2
+        return 1
+    fi
+    
+    if [[ -z "${ACCEPTED_COUNTRIES}" ]]; then
+        echo "Erro: Variável ACCEPTED_COUNTRIES não está definida" >&2
         return 1
     fi
 
-    # Inicializa lista de países selecionados
-    MY_COUNTRY_LIST=""
-
-    # Converte a lista de países aceitos em array
-    IFS=',' read -r -a country_array <<< "${ACCEPTED_COUNTRIES}"
-
-    # Verifica se existem países suficientes para sortear
-    if (( ${#country_array[@]} < COUNTRIES )); then
-        echo "[ERRO] Quantidade de países aceitos (${#country_array[@]}) é menor que COUNTRIES (${COUNTRIES})."
+    # Valida se COUNTRIES é um número positivo
+    if ! [[ "${COUNTRIES}" =~ ^[0-9]+$ ]] || [[ "${COUNTRIES}" -le 0 ]]; then
+        echo "Erro: COUNTRIES deve ser um número positivo" >&2
         return 1
     fi
 
-    # Função interna para escolher um país aleatório que ainda não esteja na lista
-    choose_random_country() {
-        local candidate
+    # Verifica se há países na lista aceita
+    if [[ -z $(echo "${ACCEPTED_COUNTRIES}" | tr -d '[:space:]') ]]; then
+        echo "Erro: Lista de países aceitos está vazia" >&2
+        return 1
+    fi
 
-        while true; do
-            # Seleciona aleatoriamente um país da lista
-            candidate="${country_array[RANDOM % ${#country_array[@]}]}"
+    local MY_COUNTRY_LIST=""
+    local unique_countries=0
+    local max_retries=50  # Limite para evitar loops infinitos
+    local retry_count=0
 
-            # Verifica se já foi selecionado
-            if ! grep -iqFx "$candidate" <<< "$MY_COUNTRY_LIST"; then
-                echo "$candidate"
-                return 0
+    # Função auxiliar para selecionar um país único
+    sort_country() {
+        ((retry_count++))
+        
+        # Verifica se excedeu o número máximo de tentativas
+        if [[ "${retry_count}" -gt "${max_retries}" ]]; then
+            echo "Erro: Número máximo de tentativas alcançado ao selecionar países únicos" >&2
+            return 1
+        fi
+
+        local COUNTRY_CANDIDATE
+        COUNTRY_CANDIDATE=$(echo "${ACCEPTED_COUNTRIES}" | tr ',' '\n' | awk '{$1=$1};1' | grep -v '^$' | shuf -n 1)
+
+        # Verifica se obteve um país candidato válido
+        if [[ -z "${COUNTRY_CANDIDATE}" ]]; then
+            echo "Erro: Falha ao selecionar um país candidato" >&2
+            return 1
+        fi
+
+        # Adiciona o país à lista se for único
+        if [[ -z "${MY_COUNTRY_LIST}" ]]; then
+            MY_COUNTRY_LIST="${COUNTRY_CANDIDATE}"
+            unique_countries=1
+        else
+            if ! echo "${MY_COUNTRY_LIST}" | grep -qi "^${COUNTRY_CANDIDATE}$"; then
+                MY_COUNTRY_LIST=$(printf '%s\n%s' "${MY_COUNTRY_LIST}" "${COUNTRY_CANDIDATE}")
+                unique_countries=$((unique_countries + 1))
+            else
+                # Chama recursivamente para tentar outro país
+                sort_country || return 1
             fi
-            # Se já foi escolhido, tenta novamente (evita repetição)
-        done
+        fi
     }
 
-    # Loop para selecionar N países diferentes
-    for ((i = 0; i < COUNTRIES; i++)); do
-        selected_country=$(choose_random_country)
-        MY_COUNTRY_LIST+="${selected_country}"$'\n'
+    # Seleciona a quantidade especificada de países
+    for ((i=1; i<=COUNTRIES; i++)); do
+        sort_country || return 1
+        retry_count=0  # Reseta o contador de tentativas para cada novo país
     done
 
-    # Remove última quebra de linha
-    MY_COUNTRY_LIST=$(echo "$MY_COUNTRY_LIST" | sed '/^\s*$/d')
+    # Verifica se conseguiu todos os países necessários
+    if [[ "${unique_countries}" -ne "${COUNTRIES}" ]]; then
+        echo "Erro: Não foi possível selecionar ${COUNTRIES} países únicos" >&2
+        return 1
+    fi
 
-    # Chama a função que inicia o Tor com a lista selecionada
-    boot_tor_per_country
+    # Exporta a lista de países para uso global
+    export MY_COUNTRY_LIST
+
+    # Registra ação para logging (opcional)
+    echo "Países selecionados: ${MY_COUNTRY_LIST}" >&2
+
+    # Chama a função de inicialização do Tor
+    if ! boot_tor_per_country; then
+        echo "Erro: Falha ao inicializar Tor para os países selecionados" >&2
+        return 1
+    fi
+
+    return 0
 }
