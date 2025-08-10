@@ -31,7 +31,7 @@ cat << "EOF"
 EOF
 
         echo -e "   \e[1;36mChameleon - Camuflagem Digital Avançada 🦎\e[0m"
-        echo -e "   \e[1;33mVersão:\e[0m 2.0.0 | \e[1;33mAutor:\e[0m Dor4k"
+        echo -e "   \e[1;33mVersão:\e[0m 1.0 | \e[1;33mAutor:\e[0m Dor4k"
         echo -e "   \e[1;35m■■■■■■■■■■ \e[1;33mFuncionalidades \e[1;35m■■■■■■■■■■\e[0m"
         echo -e "   \e[1;32m►\e[0m Anonimato Multinível      \e[1;32m►\e[0m Bypass de Censura"
         echo -e "   \e[1;32m►\e[0m Rotação Geográfica        \e[1;32m►\e[0m Túnel Criptografado"
