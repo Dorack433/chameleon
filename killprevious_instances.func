@@ -3,9 +3,16 @@
 # Arquivo: killprevious_instances.func
 # Objetivo: Encerrar todas as instâncias anteriores relacionadas ao projeto
 # ==========================================================================
+# Este script foi adaptado a partir do original (SPLITTER) para manter a
+# lógica principal, mas com melhorias de legibilidade e debug passo a passo.
+# ==========================================================================
 
 # Carrega as configurações
 source settings.cfg
+
+# Ativa modo de segurança e debug para rastrear erros
+set -euo pipefail
+trap 'echo -e "\n[ERRO] Falha na linha $LINENO (função: ${FUNCNAME[0]})"; exit 1' ERR
 
 # ========================
 # Função: kill_all
@@ -14,6 +21,8 @@ source settings.cfg
 kill_all() {
     local process_name="$1"
     local tmp_file="/tmp/bh_killall_list.txt"
+
+    echo "[DEBUG] Procurando processos para: '$process_name'"
 
     # Validação do nome do processo
     if [[ -z "$process_name" ]]; then
@@ -36,11 +45,11 @@ kill_all() {
         if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
             echo "[INFO] Matando processo $pid relacionado a: $process_name"
             
-            # Tenta encerrar de forma amigável
-            kill -s SIGTERM "$pid" > /dev/null 2>&1 || true
-            sleep 0.5
+            # Primeira tentativa - sinal mais leve (SIGCHLD como no original)
+            kill -s SIGCHLD "$pid" > /dev/null 2>&1 || true
+            sleep 0.2
 
-            # Força o encerramento se necessário
+            # Força o encerramento se ainda estiver ativo
             if kill -0 "$pid" 2>/dev/null; then
                 kill -9 "$pid" > /dev/null 2>&1 || echo "[ERRO] Falha ao forçar término do processo $pid"
             fi
@@ -49,6 +58,7 @@ kill_all() {
 
     # Remove o arquivo temporário
     rm -f "$tmp_file"
+    echo "[DEBUG] Finalizada limpeza de: $process_name"
     return 0
 }
 
@@ -74,6 +84,7 @@ killprevious_instances() {
         "status.func"
     )
 
+    # Executa o encerramento para cada processo
     for proc in "${process_list[@]}"; do
         kill_all "$proc"
     done
