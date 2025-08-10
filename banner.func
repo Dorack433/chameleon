@@ -38,3 +38,4 @@ EOF
         echo -e "   \e[1;32m►\e[0m Balanceamento Inteligente \e[1;32m►\e[0m Auto-Recuperação"
         echo ""
     }
+banner
