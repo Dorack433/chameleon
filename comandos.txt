@@ -1,0 +1,146 @@
+🦎 Chameleon - Guia Completo de Comandos
+🧩 1️⃣ Comandos Básicos
+
+Esses são os comandos mais comuns usados no dia a dia:
+
+Comando	Descrição
+./chameleon.sh --start	Inicia todas as instâncias e serviços (Tor, Privoxy, HAProxy).
+./chameleon.sh --stop	Para todas as instâncias em execução.
+./chameleon.sh --restart	Reinicia os serviços e aplica novamente as configurações.
+./chameleon.sh --help	Exibe o menu de ajuda completo.
+
+📌 Exemplo:
+
+./chameleon.sh --start --country BR,US,DE
+
+
+Inicia múltiplas instâncias com saídas no Brasil, EUA e Alemanha.
+
+⚙️ 2️⃣ Parâmetros de Configuração
+
+Esses comandos ajustam o comportamento do Chameleon sem precisar editar o arquivo settings.cfg.
+
+Parâmetro	Descrição	Exemplo
+--country XX,YY,ZZ	Define lista de países (ISO 2 letras).	--country US,DE,NL
+--load-balance <algoritmo>	Define algoritmo de balanceamento: roundrobin, leastconn, random.	--load-balance leastconn
+--max-instances <n>	Limita o número de instâncias Tor simultâneas.	--max-instances 8
+--relay-mode <modo>	Define modo de operação do relay: entry, exit, speed, none.	--relay-mode exit
+--bridge-type <tipo>	Tipo de bridge Tor: obfs4, meek, snowflake.	--bridge-type obfs4
+🧠 3️⃣ Modos de Relay (-re ou --relay-mode)
+Modo	Descrição	Indicação
+entry	País A = entrada, País B = saída (round-robin).	Alta privacidade
+exit	País A = saída, País B = entrada.	Alta privacidade
+speed	Mesmo país entrada/saída (baixa latência).	Alta velocidade
+none	Sem restrição geográfica.	Equilíbrio
+
+📌 Exemplo:
+
+./chameleon.sh -i 3 -c 5 -re exit
+
+🌍 4️⃣ Opções de Rede e Países
+Parâmetro	Descrição
+-i <número>	Número de instâncias por país.
+-c <número>	Número total de países.
+--update-country XX,YY,ZZ	Atualiza países em tempo real sem reiniciar tudo.
+--geoip-refresh	Atualiza base de dados GeoIP para filtragem.
+
+📌 Exemplo:
+
+./chameleon.sh --update-country CA,MX,BR
+
+🛡️ 5️⃣ Comandos de Verificação e Diagnóstico
+Comando	Descrição
+--status	Exibe status atual das instâncias.
+--check-deps	Verifica dependências do sistema.
+--verbose	Ativa modo detalhado para depuração.
+--logs	Exibe logs em tempo real.
+--clean	Remove caches e arquivos temporários.
+--test-proxy	Testa saída do proxy com curl ifconfig.me.
+
+📌 Exemplo:
+
+./chameleon.sh --verbose --status
+
+🧱 6️⃣ Integração com Docker
+Comando	Descrição
+--docker-build	Constrói a imagem Docker.
+--docker-run	Executa o container com portas expostas.
+--docker-stop	Encerra container ativo.
+--docker-logs	Mostra logs do container.
+
+📌 Exemplo de Execução Docker:
+
+docker run -d --name chameleon \
+  -p 8118:8118 -p 9050:9050 -p 8080:8080 \
+  chameleon-proxy --country US,DE --load-balance roundrobin
+
+⚡ 7️⃣ Comandos de Automação
+Comando	Descrição
+--auto-restart	Reinicia automaticamente em caso de falha.
+--schedule <cron>	Define agendamento automático.
+--background	Executa em segundo plano (daemon).
+--force-reload	Recarrega rotas sem parar serviços.
+🔧 8️⃣ Configuração Avançada (settings.cfg)
+
+Principais variáveis configuráveis:
+
+Variável	Função	Exemplo
+DEFAULT_COUNTRIES	Países padrão	"US,DE,FR"
+MAX_TOR_INSTANCES	Máximo de instâncias simultâneas	5
+LOAD_BALANCER_ALGO	Algoritmo de balanceamento	"leastconn"
+TOR_BRIDGE_TYPE	Tipo de bridge	"obfs4"
+ENABLE_VERBOSE	Ativa logs detalhados	true
+DNSDIST_PORT	Porta do dnsdist	5353
+HAPROXY_PORT	Porta do HAProxy	8080
+🧩 9️⃣ Diagnóstico e Monitoramento Web
+
+A ferramenta possui painel de status local:
+
+http://127.0.0.1:63537/chameleon_status
+
+
+Exibe:
+
+Países ativos
+
+IPs de saída
+
+Latência média
+
+Estado das instâncias Tor/Privoxy/HAProxy
+
+⚠️ 🔟 Avisos Importantes de Segurança
+
+O modo speed reduz anonimato (entrada e saída no mesmo país).
+
+Países com poucos relays podem gerar instabilidade.
+
+Evite logs em disco se buscar anonimato total.
+
+Combine com proxychains ou torsocks para redirecionar tráfego de apps.
+
+💡 Exemplos Práticos de Uso
+
+1️⃣ Modo privacidade máxima (entrada/saída diferentes):
+
+./chameleon.sh -i 3 -c 5 -re exit
+
+
+2️⃣ Foco em velocidade (mesmo país):
+
+./chameleon.sh -i 2 -c 1 -re speed
+
+
+3️⃣ Operação equilibrada e automática:
+
+./chameleon.sh --start --country US,DE,FR --load-balance leastconn
+
+
+4️⃣ Atualizar países em tempo real:
+
+./chameleon.sh --update-country JP,SE,NO
+
+
+5️⃣ Testar IP de saída:
+
+curl --proxy http://localhost:8118 ifconfig.me
